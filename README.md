@@ -2,6 +2,10 @@
 
 A deterministic desktop tool for reviewing, validating, and applying unified diff patches to a local project directory.
 
+<img width="1460" height="900" alt="screenshot" src="https://github.com/user-attachments/assets/a9737b75-ed99-46b4-8a06-6fc85a9ab0f0" />
+
+---
+
 Patch Studio exists because command-line patch tools will happily half-apply a diff and leave you to work out what happened. This one won't: nothing touches disk until a dry-run has succeeded and you have explicitly confirmed it.
 
 **Normalize → Parse → Preflight → Preview → Apply.** Every stage is visible, every write is backed up, every path is bound to the workspace root.
