@@ -95,14 +95,13 @@ python run_patchstudio.py
 python -m patchstudio.app --selftest
 ```
 
-**Test suite:**
+**Test suite** — run from the repo root:
 
 ```bash
-cd src
-pytest tests
+pytest
 ```
 
-Headless environments need `QT_QPA_PLATFORM=offscreen`.
+`pytest.ini` puts `src/` on the path, so `pytest src/tests` and `pytest` both work from anywhere in the tree. Headless environments need `QT_QPA_PLATFORM=offscreen`.
 
 **Package layout:**
 
