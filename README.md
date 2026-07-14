@@ -1,14 +1,19 @@
 # Patch Studio
 
+**Nothing touches disk until you say so.**
+
+[![License](https://img.shields.io/badge/license-Apache%202.0-2fd6c3.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10%2B-4be08a.svg)](https://www.python.org/)
+[![UI](https://img.shields.io/badge/UI-PyQt6-ffb454.svg)](https://pypi.org/project/PyQt6/)
+[![Tests](https://img.shields.io/badge/tests-19%20passing-4be08a.svg)](#developer-utilities)
+
 A deterministic desktop tool for reviewing, validating, and applying unified diff patches to a local project directory.
-
-<img width="1460" height="900" alt="screenshot" src="https://github.com/user-attachments/assets/a9737b75-ed99-46b4-8a06-6fc85a9ab0f0" />
-
----
 
 Patch Studio exists because command-line patch tools will happily half-apply a diff and leave you to work out what happened. This one won't: nothing touches disk until a dry-run has succeeded and you have explicitly confirmed it.
 
 **Normalize → Parse → Preflight → Preview → Apply.** Every stage is visible, every write is backed up, every path is bound to the workspace root.
+
+![Patch Studio](docs/screenshot.png)
 
 ---
 
