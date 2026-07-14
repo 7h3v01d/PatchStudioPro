@@ -1,4 +1,8 @@
-"""Patch Studio core: generate unified diffs from baseline vs outputs."""
+"""Patch Studio core: generate unified diffs from baseline vs outputs.
+
+SPDX-License-Identifier: Apache-2.0
+Copyright (c) Leon Priest (7h3v01d)
+"""
 
 from __future__ import annotations
 
@@ -30,14 +34,24 @@ class DiffGenerator:
         if new_text.endswith("\n") and (not new_lines or new_lines[-1] != ""):
             new_lines.append("")
 
+        # IMPORTANT:
+        # difflib.unified_diff() returns header lines with newlines but hunk body lines
+        # often WITHOUT trailing newline. If we just "".join(), the hunk lines concatenate
+        # into a single invalid line (breaking parsing + preview).
         diff = difflib.unified_diff(
             old_lines,
             new_lines,
             fromfile=old_path,
             tofile=new_path,
-            lineterm="\n"
-        )
-        return "".join(diff)
+            lineterm=""
+        )    
+        diff_lines = list(diff)
+        if not diff_lines:
+            return ""
+        return "\n".join(diff_lines) + "\n"
+
+
+
 
     def generate_unified_patchset(self, baseline: Dict[str, str], outputs: Dict[str, str], patchset: PatchSet) -> str:
         # Generate classic unified diff blocks for each file in patchset order.

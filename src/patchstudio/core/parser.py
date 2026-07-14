@@ -1,4 +1,8 @@
-"""Patch Studio core: unified diff parsing (classic/git/index dialects)."""
+"""Patch Studio core: unified diff parsing (classic/git/index dialects).
+
+SPDX-License-Identifier: Apache-2.0
+Copyright (c) Leon Priest (7h3v01d)
+"""
 
 from __future__ import annotations
 
@@ -7,6 +11,7 @@ from typing import List, Optional, Dict, Any
 
 from .normalizer import PatchInputNormalizer
 from .models import Hunk, FilePatch, PatchSet
+
 
 class UnifiedDiffParser:
     """
@@ -87,13 +92,29 @@ class UnifiedDiffParser:
         for ln in lines:
             if ln.startswith("GIT binary patch"):
                 display = self._strip_prefix_ab(new_path or old_path)
-                fp = FilePatch(old_path=old_path, new_path=new_path, display_path=display, operation="modify", hunks=[],
-                               is_binary=True, binary_reason="GIT binary patch unsupported", metadata=metadata)
+                fp = FilePatch(
+                    old_path=old_path,
+                    new_path=new_path,
+                    display_path=display,
+                    operation="modify",
+                    hunks=[],
+                    is_binary=True,
+                    binary_reason="GIT binary patch unsupported",
+                    metadata=metadata,
+                )
                 return fp
             if ln.startswith("Binary files "):
                 display = self._strip_prefix_ab(new_path or old_path)
-                fp = FilePatch(old_path=old_path, new_path=new_path, display_path=display, operation="modify", hunks=[],
-                               is_binary=True, binary_reason="Binary files differ (unsupported)", metadata=metadata)
+                fp = FilePatch(
+                    old_path=old_path,
+                    new_path=new_path,
+                    display_path=display,
+                    operation="modify",
+                    hunks=[],
+                    is_binary=True,
+                    binary_reason="Binary files differ (unsupported)",
+                    metadata=metadata,
+                )
                 return fp
 
         while i < len(lines):
@@ -111,9 +132,9 @@ class UnifiedDiffParser:
             elif ln.startswith("similarity index "):
                 metadata["similarity_index"] = ln.strip()
             elif ln.startswith("rename from "):
-                metadata["rename_from"] = ln[len("rename from "):].strip()
+                metadata["rename_from"] = ln[len("rename from ") :].strip()
             elif ln.startswith("rename to "):
-                metadata["rename_to"] = ln[len("rename to "):].strip()
+                metadata["rename_to"] = ln[len("rename to ") :].strip()
             elif ln.startswith("--- "):
                 old_hdr = self._parse_path_from_header_line(ln, "--- ")
                 i += 1
@@ -146,16 +167,33 @@ class UnifiedDiffParser:
     def _parse_index_block(self, lines: List[str], index_path: Optional[str]) -> Optional[FilePatch]:
         # Index style may contain separators "====" and possibly "RCS file:" etc.
         metadata: Dict[str, Any] = {"index_path": index_path}
+
         # binary indicator
         for ln in lines:
             if ln.startswith("GIT binary patch"):
                 display = index_path or "(unknown)"
-                return FilePatch(old_path=display, new_path=display, display_path=display, operation="modify", hunks=[],
-                                 is_binary=True, binary_reason="GIT binary patch unsupported", metadata=metadata)
+                return FilePatch(
+                    old_path=display,
+                    new_path=display,
+                    display_path=display,
+                    operation="modify",
+                    hunks=[],
+                    is_binary=True,
+                    binary_reason="GIT binary patch unsupported",
+                    metadata=metadata,
+                )
             if ln.startswith("Binary files "):
                 display = index_path or "(unknown)"
-                return FilePatch(old_path=display, new_path=display, display_path=display, operation="modify", hunks=[],
-                                 is_binary=True, binary_reason="Binary files differ (unsupported)", metadata=metadata)
+                return FilePatch(
+                    old_path=display,
+                    new_path=display,
+                    display_path=display,
+                    operation="modify",
+                    hunks=[],
+                    is_binary=True,
+                    binary_reason="Binary files differ (unsupported)",
+                    metadata=metadata,
+                )
 
         old_path = None
         new_path = None
@@ -169,6 +207,7 @@ class UnifiedDiffParser:
             i += 1
         if old_path is None:
             return None
+
         while i < len(lines):
             ln = lines[i]
             if ln.startswith("+++ "):
@@ -189,17 +228,33 @@ class UnifiedDiffParser:
 
     def _parse_classic_block(self, lines: List[str]) -> Optional[FilePatch]:
         metadata: Dict[str, Any] = {}
+
         # binary indicator
         for ln in lines:
             if ln.startswith("GIT binary patch"):
-                # Try to find paths anyway
                 display = "(unknown)"
-                return FilePatch(old_path=display, new_path=display, display_path=display, operation="modify", hunks=[],
-                                 is_binary=True, binary_reason="GIT binary patch unsupported", metadata=metadata)
+                return FilePatch(
+                    old_path=display,
+                    new_path=display,
+                    display_path=display,
+                    operation="modify",
+                    hunks=[],
+                    is_binary=True,
+                    binary_reason="GIT binary patch unsupported",
+                    metadata=metadata,
+                )
             if ln.startswith("Binary files "):
                 display = "(unknown)"
-                return FilePatch(old_path=display, new_path=display, display_path=display, operation="modify", hunks=[],
-                                 is_binary=True, binary_reason="Binary files differ (unsupported)", metadata=metadata)
+                return FilePatch(
+                    old_path=display,
+                    new_path=display,
+                    display_path=display,
+                    operation="modify",
+                    hunks=[],
+                    is_binary=True,
+                    binary_reason="Binary files differ (unsupported)",
+                    metadata=metadata,
+                )
 
         if not lines or not lines[0].startswith("--- "):
             # best-effort: locate first --- / +++
@@ -212,6 +267,7 @@ class UnifiedDiffParser:
 
         old_hdr = self._parse_path_from_header_line(lines[0], "--- ")
         old_path = self._strip_prefix_ab(old_hdr) if old_hdr != "/dev/null" else "/dev/null"
+
         i = 1
         new_path = None
         while i < len(lines):
@@ -245,22 +301,32 @@ class UnifiedDiffParser:
                 old_count = int(m.group(2)) if m.group(2) is not None else 1
                 new_start = int(m.group(3))
                 new_count = int(m.group(4)) if m.group(4) is not None else 1
-                header_tail = m.group(5) or ""
                 header = ln.strip()
-                current = Hunk(old_start=old_start, old_count=old_count, new_start=new_start, new_count=new_count, header=header, lines=[])
+                current = Hunk(
+                    old_start=old_start,
+                    old_count=old_count,
+                    new_start=new_start,
+                    new_count=new_count,
+                    header=header,
+                    lines=[],
+                )
                 i += 1
                 continue
 
             if current is not None:
                 if ln.startswith("\\ No newline at end of file"):
-                    # ignore marker
                     i += 1
                     continue
+
                 if ln == "":
-                    # empty line in diff content is valid; tag still required in unified, but best-effort accept as context
-                    current.lines.append((" ", ""))
+                    # IMPORTANT:
+                    # In unified diffs, an empty content line is represented as " ", "+", or "-"
+                    # (tag char + empty payload). A bare "" here is almost always an artifact of
+                    # split("\n") at the end of the block. If we convert it into a context line,
+                    # we inject a phantom line and hunk matching can fail.
                     i += 1
                     continue
+
                 tag = ln[0]
                 if tag in (" ", "+", "-"):
                     current.lines.append((tag, ln[1:]))
@@ -272,5 +338,3 @@ class UnifiedDiffParser:
         if current is not None:
             hunks.append(current)
         return hunks
-
-

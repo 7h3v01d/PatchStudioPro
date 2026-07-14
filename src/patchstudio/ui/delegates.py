@@ -1,16 +1,19 @@
-"""Patch Studio UI: item delegates (syntax emphasis)."""
+"""Patch Studio UI: item delegates (syntax emphasis).
+
+SPDX-License-Identifier: Apache-2.0
+Copyright (c) Leon Priest (7h3v01d)
+"""
 
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import Dict, List, Optional, Tuple
 
-from PyQt6.QtCore import Qt, QSize, QModelIndex
-from PyQt6.QtGui import (
-    QFont, QFontMetrics, QTextLayout, QTextOption,
-    QBrush, QColor, QPainter, QPen
-)
+from PyQt6.QtCore import Qt, QModelIndex
+from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPen
 from PyQt6.QtWidgets import QStyledItemDelegate, QStyle
+
+from .theme import SYNTAX
 
 class SyntaxEmphasisDelegate(QStyledItemDelegate):
     """
@@ -32,16 +35,10 @@ class SyntaxEmphasisDelegate(QStyledItemDelegate):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._cache: Dict[Tuple[str, str], List[Tuple[int, int, str]]] = {}
-        # token style key -> (QColor, bold)
-        self._styles = {
-            "kw": (QColor(30, 45, 120), True),
-            "str": (QColor(0, 90, 0), False),
-            "com": (QColor(90, 90, 90), False),
-            "num": (QColor(100, 60, 0), False),
-            "key": (QColor(60, 0, 100), True),
-            "md": (QColor(30, 30, 30), True),
-            "code": (QColor(0, 0, 0), True),
-            "def": (QColor(0, 0, 0), False),
+        # token style key -> (QColor, bold), resolved from the theme token table
+        self._styles: Dict[str, Tuple[QColor, bool]] = {
+            key: (QColor(hex_value), bold)
+            for key, (hex_value, bold) in SYNTAX.items()
         }
 
     def _ext_for_row(self, index: QModelIndex) -> str:
@@ -199,11 +196,18 @@ class SyntaxEmphasisDelegate(QStyledItemDelegate):
         # Determine ext
         ext = self._ext_for_row(index)
 
-        # Foreground default / selection
+        # Foreground: selection wins, otherwise honour the model's row ink
+        # (added / removed / conflict / hunk rows each carry their own colour).
         if option.state & QStyle.StateFlag.State_Selected:
             base_pen = QPen(option.palette.highlightedText().color())
         else:
-            base_pen = QPen(option.palette.text().color())
+            fg = index.data(Qt.ItemDataRole.ForegroundRole)
+            if isinstance(fg, QBrush):
+                base_pen = QPen(fg.color())
+            elif isinstance(fg, QColor):
+                base_pen = QPen(fg)
+            else:
+                base_pen = QPen(option.palette.text().color())
 
         painter.setPen(base_pen)
         painter.setFont(option.font)
@@ -218,8 +222,16 @@ class SyntaxEmphasisDelegate(QStyledItemDelegate):
         h = option.rect.height()
         baseline = y + (h + fm.ascent() - fm.descent()) // 2
 
+        # Hunk headers are markers, not code: render them flat in their own ink.
+        row = index.data(Qt.ItemDataRole.UserRole)
+        is_hunk = isinstance(row, dict) and row.get("kind") == "hunk"
+
         # If no spans or not a text column, draw plainly
-        spans = self._tokenize(ext, text) if index.column() in (1, 3) else []
+        spans = (
+            self._tokenize(ext, text)
+            if index.column() in (1, 3) and not is_hunk
+            else []
+        )
 
         if not spans:
             elided = fm.elidedText(text, Qt.TextElideMode.ElideRight, option.rect.width() - 10)

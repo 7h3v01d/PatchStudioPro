@@ -1,40 +1,45 @@
-"""Patch Studio UI: main window."""
+"""Patch Studio UI: main window.
+
+SPDX-License-Identifier: Apache-2.0
+Copyright (c) Leon Priest (7h3v01d)
+"""
 
 from __future__ import annotations
 
 import time
-import sys
-import json
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Tuple
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QAction, QStandardItemModel, QStandardItem, QFont
+from PyQt6.QtGui import QAction, QBrush, QColor, QStandardItemModel, QStandardItem
 from PyQt6.QtWidgets import (
     QMainWindow, QToolBar, QStatusBar, QSplitter,
     QListView, QTableView, QDockWidget,
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFileDialog, QMessageBox, QCheckBox, QSpinBox, QComboBox, QTextEdit,
-    QGroupBox, QFormLayout, QLineEdit,
-    QHeaderView, QAbstractItemView, QDialog, QStyle
+    QFileDialog, QMessageBox, QCheckBox, QSpinBox,
+    QHeaderView, QAbstractItemView, QDialog,
+    QFrame, QSizePolicy
 )
 
 from ..core.normalizer import PatchInputNormalizer
 from ..core.parser import UnifiedDiffParser
 from ..core.applier import PatchApplier
 from ..core.diffgen import DiffGenerator
-from ..core.models import PatchSet, FilePatch, ApplyResult
+from ..core.models import PatchSet, ApplyResult
 from ..core.selftests import PatchStudioSelfTests
 
 from .models import DiffAlignmentModel, LogTableModel
 from .delegates import SyntaxEmphasisDelegate
 from .dialogs import PreflightReportDialog, DiagnosticsDialog
+from .theme import PALETTE, build_font
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Patch Studio v1.4")
-        self.resize(1200, 720)
+        self.setWindowTitle("Patch Studio")
+        self.resize(1460, 900)
+        self.setMinimumSize(1180, 760)
 
         self.normalizer = PatchInputNormalizer()
         self.parser = UnifiedDiffParser()
@@ -48,11 +53,9 @@ class MainWindow(QMainWindow):
         self.patchset: Optional[PatchSet] = None
         self.preflight_report: List[Dict[str, Any]] = []
         self.preview_result: Optional[ApplyResult] = None
-        self.baseline_texts: Dict[str, str] = {}  # display_path -> text
+        self.baseline_texts: Dict[str, str] = {}
 
-        # Global font
-        app_font = QFont("Consolas", 10)
-        self.setFont(app_font)
+        self.setFont(build_font())
 
         self._build_toolbar()
         self._build_central()
@@ -60,6 +63,7 @@ class MainWindow(QMainWindow):
         self._build_status()
 
         self._refresh_actions()
+        self._update_session_cards()
         self._log_info("Ready.", component="ui")
 
     # ---------------- UI Construction ----------------
@@ -68,8 +72,9 @@ class MainWindow(QMainWindow):
         tb = QToolBar("Main")
         tb.setMovable(False)
         self.addToolBar(tb)
+        self.main_toolbar = tb
 
-        self.act_open = QAction("Open", self)
+        self.act_open = QAction("Open File", self)
         self.act_open.triggered.connect(self._open_file)
 
         self.act_open_folder = QAction("Open Folder", self)
@@ -99,26 +104,130 @@ class MainWindow(QMainWindow):
         self.act_help = QAction("Help", self)
         self.act_help.triggered.connect(self._show_help)
 
-        for a in [
+        for action in [
             self.act_open, self.act_open_folder, self.act_load_diff,
             self.act_preflight, self.act_preview, self.act_apply,
-            self.act_generate, self.act_save_diff, self.act_advanced, self.act_help
+            self.act_generate, self.act_save_diff, self.act_advanced, self.act_help,
         ]:
-            tb.addAction(a)
+            tb.addAction(action)
 
     def _build_central(self):
+        root = QWidget()
+        root_layout = QVBoxLayout(root)
+        root_layout.setContentsMargins(14, 14, 14, 12)
+        root_layout.setSpacing(12)
+
+        hero = QFrame()
+        hero.setObjectName("HeroCard")
+        hero_layout = QVBoxLayout(hero)
+        hero_layout.setContentsMargins(18, 18, 18, 18)
+        hero_layout.setSpacing(14)
+
+        hero_top = QHBoxLayout()
+        hero_top.setSpacing(18)
+
+        title_block = QVBoxLayout()
+        title_block.setSpacing(6)
+
+        title_row = QHBoxLayout()
+        title_row.setSpacing(10)
+        title = QLabel("PATCH STUDIO")
+        title.setObjectName("HeroTitle")
+        badge = QLabel("PRO")
+        badge.setObjectName("HeroBadge")
+        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_row.addWidget(title)
+        title_row.addWidget(badge, 0, Qt.AlignmentFlag.AlignVCenter)
+        title_row.addStretch(1)
+
+        subtitle = QLabel("Deterministic patch review — preflight, dry-run preview, then a gated apply. Nothing touches disk until you say so.")
+        subtitle.setObjectName("HeroSubtitle")
+        title_block.addLayout(title_row)
+        title_block.addWidget(subtitle)
+        hero_top.addLayout(title_block, 2)
+
+        cmd_block = QHBoxLayout()
+        cmd_block.setSpacing(8)
+        self.btn_open_folder = self._make_action_button("Workspace", self._open_folder)
+        self.btn_load_diff = self._make_action_button("Load Patch", self._load_diff)
+        self.btn_preflight = self._make_action_button("Preflight", self._run_preflight)
+        self.btn_preview = self._make_action_button("Preview", self._run_preview, role="primary")
+        self.btn_apply = self._make_action_button("Apply", self._run_apply, role="danger")
+        for btn in [self.btn_open_folder, self.btn_load_diff, self.btn_preflight, self.btn_preview, self.btn_apply]:
+            cmd_block.addWidget(btn)
+        hero_top.addLayout(cmd_block, 1)
+        hero_layout.addLayout(hero_top)
+
+        cards = QHBoxLayout()
+        cards.setSpacing(12)
+        self.card_root, self.card_root_value = self._make_stat_card(cards, "WORKSPACE ROOT", "No folder selected")
+        self.card_patch, self.card_patch_value = self._make_stat_card(cards, "PATCH SESSION", "No patch loaded")
+        self.card_preview, self.card_preview_value = self._make_stat_card(cards, "PREVIEW STATE", "Idle")
+        self.card_apply, self.card_apply_value = self._make_stat_card(cards, "APPLY GATE", "Blocked")
+        hero_layout.addLayout(cards)
+        root_layout.addWidget(hero)
+
+        workspace_card = QFrame()
+        workspace_card.setObjectName("PanelCard")
+        workspace_layout = QVBoxLayout(workspace_card)
+        workspace_layout.setContentsMargins(14, 14, 14, 14)
+        workspace_layout.setSpacing(10)
+
+        section_top = QHBoxLayout()
+        section_titles = QVBoxLayout()
+        section_titles.setSpacing(2)
+        section_label = QLabel("PATCH REVIEW SURFACE")
+        section_label.setObjectName("SectionTitle")
+        section_sub = QLabel("Select a patch file on the left, inspect the aligned diff on the right, then review diagnostics before apply.")
+        section_sub.setObjectName("SectionSubtitle")
+        section_titles.addWidget(section_label)
+        section_titles.addWidget(section_sub)
+        section_top.addLayout(section_titles)
+        section_top.addStretch(1)
+
+        self.inline_open_btn = self._make_action_button("Open File", self._open_file, role="ghost")
+        self.inline_generate_btn = self._make_action_button("Generate Diff", self._run_generate, role="ghost")
+        self.inline_save_btn = self._make_action_button("Save Diff", self._save_diff, role="ghost")
+        for btn in [self.inline_open_btn, self.inline_generate_btn, self.inline_save_btn]:
+            section_top.addWidget(btn)
+        workspace_layout.addLayout(section_top)
+
         splitter = QSplitter()
         splitter.setOrientation(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
 
-        # File list
+        left_panel = QFrame()
+        left_panel.setObjectName("PanelCard")
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(12, 12, 12, 12)
+        left_layout.setSpacing(8)
+        left_title = QLabel("PATCH FILES")
+        left_title.setObjectName("SectionTitle")
+        left_sub = QLabel("Resolved files, status annotations, and binary markers.")
+        left_sub.setObjectName("SectionSubtitle")
+        left_layout.addWidget(left_title)
+        left_layout.addWidget(left_sub)
+
         self.file_list = QListView()
-        self.file_list.setMinimumWidth(260)
+        self.file_list.setMinimumWidth(280)
         self.file_list.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.file_model = QStandardItemModel()
         self.file_list.setModel(self.file_model)
         self.file_list.selectionModel().selectionChanged.connect(self._on_file_selected)
+        left_layout.addWidget(self.file_list, 1)
 
-        # Diff table
+        right_panel = QFrame()
+        right_panel.setObjectName("PanelCard")
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(12, 12, 12, 12)
+        right_layout.setSpacing(8)
+        right_title = QLabel("ALIGNED DIFF VIEW")
+        right_title.setObjectName("SectionTitle")
+        right_sub = QLabel("Old and new line state rendered side-by-side with syntax emphasis and hunk headers.")
+        right_sub.setObjectName("SectionSubtitle")
+        right_layout.addWidget(right_title)
+        right_layout.addWidget(right_sub)
+
         self.diff_table = QTableView()
         self.diff_model = DiffAlignmentModel()
         self.diff_table.setModel(self.diff_model)
@@ -130,37 +239,43 @@ class MainWindow(QMainWindow):
         self.diff_table.setAlternatingRowColors(False)
         self.diff_table.setShowGrid(False)
         self.diff_table.setSortingEnabled(False)
+        self.diff_table.verticalHeader().setVisible(False)
+        self.diff_table.setCornerButtonEnabled(False)
 
         hdr = self.diff_table.horizontalHeader()
         hdr.setStretchLastSection(False)
         hdr.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-
-        # Column widths as specified
-        self.diff_table.setColumnWidth(0, 60)
-        self.diff_table.setColumnWidth(2, 60)
+        self.diff_table.setColumnWidth(0, 76)
+        self.diff_table.setColumnWidth(2, 76)
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
 
-        # Syntax emphasis delegate for text columns 1 and 3
         self.syntax_delegate = SyntaxEmphasisDelegate(self.diff_table)
         self.diff_table.setItemDelegateForColumn(1, self.syntax_delegate)
         self.diff_table.setItemDelegateForColumn(3, self.syntax_delegate)
+        right_layout.addWidget(self.diff_table, 1)
 
-        splitter.addWidget(self.file_list)
-        splitter.addWidget(self.diff_table)
-        splitter.setSizes([260, 940])
+        splitter.addWidget(left_panel)
+        splitter.addWidget(right_panel)
+        splitter.setSizes([320, 980])
+        workspace_layout.addWidget(splitter, 1)
 
-        self.setCentralWidget(splitter)
+        root_layout.addWidget(workspace_card, 1)
+        self.setCentralWidget(root)
 
     def _build_docks(self):
-        # Bottom dock: Log / Diagnostics (hidden by default)
-        self.log_dock = QDockWidget("Log / Diagnostics", self)
+        self.log_dock = QDockWidget("OPERATIONAL LOG", self)
         self.log_dock.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea)
         self.log_dock.setVisible(False)
 
         log_widget = QWidget()
         log_layout = QVBoxLayout(log_widget)
-        log_layout.setContentsMargins(4, 4, 4, 4)
+        log_layout.setContentsMargins(8, 8, 8, 8)
+        log_layout.setSpacing(8)
+
+        log_head = QLabel("Structured engine events, warnings, and apply diagnostics.")
+        log_head.setObjectName("SectionSubtitle")
+        log_layout.addWidget(log_head)
 
         self.log_table = QTableView()
         self.log_model = LogTableModel()
@@ -169,25 +284,39 @@ class MainWindow(QMainWindow):
         self.log_table.setWordWrap(False)
         self.log_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.log_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-
+        self.log_table.verticalHeader().setVisible(False)
         log_layout.addWidget(self.log_table)
         self.log_dock.setWidget(log_widget)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.log_dock)
 
-        # Right dock: Advanced panel (hidden by default)
-        self.adv_dock = QDockWidget("Advanced", self)
+        self.adv_dock = QDockWidget("ADVANCED CONTROLS", self)
         self.adv_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
         self.adv_dock.setVisible(False)
 
         adv_widget = QWidget()
-        form = QFormLayout(adv_widget)
-        form.setContentsMargins(8, 8, 8, 8)
+        adv_layout = QVBoxLayout(adv_widget)
+        adv_layout.setContentsMargins(10, 10, 10, 10)
+        adv_layout.setSpacing(12)
+
+        intro = QLabel("Gating stays conservative by default. These switches deliberately expose riskier behaviors.")
+        intro.setWordWrap(True)
+        intro.setObjectName("SectionSubtitle")
+        adv_layout.addWidget(intro)
+
+        safety_box = QFrame()
+        safety_box.setObjectName("PanelCard")
+        safety_layout = QVBoxLayout(safety_box)
+        safety_layout.setContentsMargins(12, 12, 12, 12)
+        safety_layout.setSpacing(8)
 
         self.chk_strict = QCheckBox("Strict filename match")
         self.chk_fuzzy = QCheckBox("Best-effort fuzzy apply")
+        fuzzy_row = QHBoxLayout()
+        fuzzy_row.addWidget(QLabel("Fuzzy window size (lines)"))
         self.spn_fuzzy = QSpinBox()
         self.spn_fuzzy.setRange(1, 5000)
         self.spn_fuzzy.setValue(200)
+        fuzzy_row.addWidget(self.spn_fuzzy)
         self.chk_ignore_ws = QCheckBox("Ignore whitespace differences")
         self.chk_conflict = QCheckBox("Conflict marker mode (3-way style markers)")
         self.chk_allow_meta = QCheckBox("Allow rename/delete/mode changes")
@@ -198,21 +327,25 @@ class MainWindow(QMainWindow):
         self.chk_skip_bin = QCheckBox("Skip unsupported binary files")
         self.chk_skip_bin.setChecked(True)
 
-        form.addRow(self.chk_strict)
-        form.addRow(self.chk_fuzzy)
-        form.addRow("Fuzzy window size (lines)", self.spn_fuzzy)
-        form.addRow(self.chk_ignore_ws)
-        form.addRow(self.chk_conflict)
-        form.addRow(self.chk_allow_meta)
-        form.addRow(self.chk_partial)
-        form.addRow(self.chk_preserve_eol)
-        form.addRow(self.chk_allow_conflicted_write)
-        form.addRow(self.chk_skip_bin)
+        for widget in [
+            self.chk_strict,
+            self.chk_fuzzy,
+            self.chk_ignore_ws,
+            self.chk_conflict,
+            self.chk_allow_meta,
+            self.chk_partial,
+            self.chk_preserve_eol,
+            self.chk_allow_conflicted_write,
+            self.chk_skip_bin,
+        ]:
+            safety_layout.addWidget(widget)
+        safety_layout.addLayout(fuzzy_row)
+        adv_layout.addWidget(safety_box)
+        adv_layout.addStretch(1)
 
         self.adv_dock.setWidget(adv_widget)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.adv_dock)
 
-        # Help menu with self tests
         self.menu = self.menuBar().addMenu("Help")
         act_selftests = QAction("Run Self Tests", self)
         act_selftests.triggered.connect(self._run_selftests_ui)
@@ -221,7 +354,107 @@ class MainWindow(QMainWindow):
     def _build_status(self):
         sb = QStatusBar()
         self.setStatusBar(sb)
-        self._set_status("No patch loaded.", state="Idle", warn="")
+        self.status_summary = QLabel()
+        self.status_summary.setObjectName("StatusSummary")
+        self.status_state = QLabel()
+        self.status_state.setObjectName("StatusState")
+        self.status_warn = QLabel()
+        self.status_warn.setObjectName("StatusWarn")
+        sb.addWidget(self.status_summary, 1)
+        sb.addPermanentWidget(self.status_state)
+        sb.addPermanentWidget(self.status_warn)
+        self._set_status("No patch loaded.", state="Idle", warn="Awaiting workspace selection.")
+
+    # ---------------- UI Helpers ----------------
+
+    def _make_action_button(self, text: str, callback, role: str | None = None) -> QPushButton:
+        btn = QPushButton(text)
+        btn.clicked.connect(callback)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        if role:
+            btn.setProperty("role", role)
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+        return btn
+
+    def _make_stat_card(self, layout: QHBoxLayout, label_text: str, value_text: str) -> Tuple[QFrame, QLabel]:
+        card = QFrame()
+        card.setObjectName("StatCard")
+        card.setProperty("tone", "idle")
+        card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(14, 12, 14, 12)
+        card_layout.setSpacing(4)
+
+        label = QLabel(label_text)
+        label.setObjectName("StatLabel")
+        value = QLabel(value_text)
+        value.setObjectName("StatValue")
+        value.setWordWrap(True)
+        card_layout.addWidget(label)
+        card_layout.addWidget(value)
+        layout.addWidget(card)
+        return card, value
+
+    def _set_card_tone(self, card: QFrame, tone: str) -> None:
+        """Repaint a stat card's accent rail. Tones: idle | live | armed | gated | blocked."""
+        if card.property("tone") == tone:
+            return
+        card.setProperty("tone", tone)
+        card.style().unpolish(card)
+        card.style().polish(card)
+
+    def _truncate_middle(self, value: str, limit: int = 52) -> str:
+        if len(value) <= limit:
+            return value
+        head = max(12, (limit // 2) - 2)
+        tail = max(10, limit - head - 1)
+        return f"{value[:head]}…{value[-tail:]}"
+
+    def _update_session_cards(self) -> None:
+        root_text = self._truncate_middle(self.root_folder, 54) if self.root_folder else "No folder selected"
+        patch_text = "No patch loaded"
+        if self.patchset:
+            patch_text = f"{self.patchset.total_files()} file(s) • {self.patchset.total_hunks()} hunk(s)"
+
+        preview_text = "Idle"
+        if self.preview_result:
+            preview_text = "Ready" if self.preview_result.success else "Failed"
+            conflicts = len(self.preview_result.summary.get("conflicted_files", []))
+            if conflicts:
+                preview_text += f" • {conflicts} conflict(s)"
+
+        apply_text = "Blocked"
+        if self.preview_result and self.preview_result.success:
+            apply_text = "Armed"
+            if self.preview_result.summary.get("conflicted_files") and not self.chk_allow_conflicted_write.isChecked():
+                apply_text = "Conflict gated"
+
+        self.card_root_value.setText(root_text)
+        self.card_patch_value.setText(patch_text)
+        self.card_preview_value.setText(preview_text)
+        self.card_apply_value.setText(apply_text)
+
+        # Accent rails encode state: teal = loaded, green = go, amber = gated,
+        # red = blocked, grey = nothing here yet.
+        self._set_card_tone(self.card_root, "live" if self.root_folder else "idle")
+        self._set_card_tone(self.card_patch, "live" if self.patchset else "idle")
+
+        if not self.preview_result:
+            preview_tone = "idle"
+        elif self.preview_result.success:
+            preview_tone = "gated" if self.preview_result.summary.get("conflicted_files") else "armed"
+        else:
+            preview_tone = "blocked"
+        self._set_card_tone(self.card_preview, preview_tone)
+
+        if apply_text == "Armed":
+            apply_tone = "armed"
+        elif apply_text == "Conflict gated":
+            apply_tone = "gated"
+        else:
+            apply_tone = "blocked"
+        self._set_card_tone(self.card_apply, apply_tone)
 
     # ---------------- Utilities ----------------
 
@@ -240,13 +473,24 @@ class MainWindow(QMainWindow):
         }
 
     def _set_status(self, summary: str, state: str, warn: str) -> None:
-        self.statusBar().showMessage(f"{summary}    |    State: {state}    |    {warn}".strip())
+        self.status_summary.setText(summary or "")
+        self.status_state.setText((state or "Idle").upper())
+        lowered = (state or "").lower()
+        if any(token in lowered for token in ("fail", "block", "error")):
+            status_kind = "err"
+        elif any(token in lowered for token in ("warn", "preflight", "preview")):
+            status_kind = "warn"
+        else:
+            status_kind = "ok"
+        self.status_state.setProperty("state", status_kind)
+        self.status_state.style().unpolish(self.status_state)
+        self.status_state.style().polish(self.status_state)
+        self.status_warn.setText(warn or "No active warnings")
 
     def _log(self, level: str, message: str, **fields: Any) -> None:
         entry = {"ts": time.time(), "level": level, "message": message}
         entry.update(fields)
         self.log_model.append(entry)
-        # Keep log dock optional; if an error occurs, show it
         if level in ("ERROR", "WARN"):
             self.log_dock.setVisible(True)
 
@@ -262,14 +506,26 @@ class MainWindow(QMainWindow):
     def _refresh_actions(self):
         has_patch = self.patchset is not None and self.patchset.total_files() > 0
         has_root = bool(self.root_folder)
-        has_preview_ok = bool(self.preview_result and self.preview_result.success)
 
         self.act_preflight.setEnabled(has_patch and has_root)
         self.act_preview.setEnabled(has_patch and has_root)
-        # Apply enabled after preview success unless partial override AND user chooses; we still gate in handler.
         self.act_apply.setEnabled(has_patch and has_root)
         self.act_generate.setEnabled(has_patch and bool(self.preview_result and self.preview_result.summary.get("outputs")))
         self.act_save_diff.setEnabled(bool(self.patch_text))
+
+        for button, enabled in [
+            (self.btn_load_diff, True),
+            (self.btn_open_folder, True),
+            (self.inline_open_btn, True),
+            (self.btn_preflight, has_patch and has_root),
+            (self.btn_preview, has_patch and has_root),
+            (self.btn_apply, has_patch and has_root),
+            (self.inline_generate_btn, self.act_generate.isEnabled()),
+            (self.inline_save_btn, self.act_save_diff.isEnabled()),
+        ]:
+            button.setEnabled(enabled)
+
+        self._update_session_cards()
 
     def _clear_session(self):
         self.patch_text = ""
@@ -280,45 +536,45 @@ class MainWindow(QMainWindow):
         self.diff_model.set_rows([])
         self._refresh_actions()
 
+    #: Status tag -> ink. The tag is the icon; stock Qt pixmaps looked pasted-on.
+    TAG_INK = {
+        "READY": PALETTE["green"],
+        "MISSING": PALETTE["amber"],
+        "BLOCKED": PALETTE["red"],
+        "BINARY": PALETTE["text_dim"],
+        "PENDING": PALETTE["text_dim"],
+    }
+
     def _rebuild_file_list(self):
         self.file_model.clear()
         if not self.patchset:
             return
-        icon_warn = self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxWarning)
-        icon_stop = self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxCritical)
-        icon_info = self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation)
 
-        # Map preflight status for display prefixes/icons
         status_by_display = {r["file"]: r for r in (self.preflight_report or [])}
 
         for fp in self.patchset.files:
             display = fp.display_path
-            it = QStandardItem(display)
-            it.setEditable(False)
-
-            # annotate with preflight status if available
-            if fp.is_binary:
-                it.setText(f"(Binary) {display}")
-                it.setIcon(icon_info)
+            tag = "BINARY" if fp.is_binary else "PENDING"
 
             if display in status_by_display:
                 st = status_by_display[display]["status"]
                 if st == "Missing":
-                    it.setText(f"(Missing) {display}")
-                    it.setIcon(icon_warn)
-                elif st in ("Outside root", "Blocked"):
-                    it.setText(f"(Blocked) {display}")
-                    it.setIcon(icon_stop)
+                    tag = "MISSING"
+                elif st in ("Outside root", "Blocked", "Invalid"):
+                    tag = "BLOCKED"
                 elif st.startswith("Unsupported"):
-                    it.setText(f"(Binary) {display}")
-                    it.setIcon(icon_info)
+                    tag = "BINARY"
+                elif st in ("Ready", "OK", "Exists"):
+                    tag = "READY"
 
-            # store display path + filepatch
+            it = QStandardItem(f"{tag:<8}{display}")
+            it.setEditable(False)
+            it.setForeground(QBrush(QColor(self.TAG_INK.get(tag, PALETTE["text"]))))
+            it.setToolTip(f"{display}\n{fp.operation} · {tag.lower()}")
             it.setData(display, Qt.ItemDataRole.UserRole)
             it.setData(fp, Qt.ItemDataRole.UserRole + 1)
             self.file_model.appendRow(it)
 
-        # auto-select first
         if self.file_model.rowCount() > 0:
             self.file_list.setCurrentIndex(self.file_model.index(0, 0))
 
@@ -343,9 +599,8 @@ class MainWindow(QMainWindow):
         self.root_folder = str(p.parent)
         self.baseline_texts = {p.name: text.replace("\r\n", "\n").replace("\r", "\n")}
         self._log_info("Loaded single file into session.", file=str(p), root=self.root_folder)
-        self._set_status(f"Loaded file: {p.name}", state="Ready", warn="")
+        self._set_status(f"Loaded file: {p.name}", state="Ready", warn="Workspace root updated from file selection.")
 
-        # Build file list as a minimal session, even before patch is loaded
         self.file_model.clear()
         it = QStandardItem(p.name)
         it.setEditable(False)
@@ -363,11 +618,10 @@ class MainWindow(QMainWindow):
         self.loaded_file = None
         self.baseline_texts = {}
         self._log_info("Selected workspace root folder.", root=self.root_folder)
-        self._set_status(f"Root folder: {self.root_folder}", state="Ready", warn="")
+        self._set_status(f"Root folder: {self.root_folder}", state="Ready", warn="Workspace root armed for preflight.")
         self._refresh_actions()
 
     def _load_diff(self):
-        # Offer file or paste, deterministic via a simple choice dialog
         mb = QMessageBox(self)
         mb.setWindowTitle("Load Diff")
         mb.setText("Load patch/diff from a file, or paste text?")
@@ -390,7 +644,6 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Load Failed", f"Could not read diff:\n{e}")
                 return
         else:
-            # Paste dialog
             text, ok = self._multiline_input("Paste Diff/Patch", "Paste unified diff text:")
             if not ok or not text.strip():
                 return
@@ -399,14 +652,17 @@ class MainWindow(QMainWindow):
         self.preview_result = None
         self.preflight_report = []
 
-        norm_text, dialect, blocks = self.normalizer.normalize(text)
+        _norm_text, dialect, blocks = self.normalizer.normalize(text)
         ps = self.parser.parse(dialect, blocks)
         self.patchset = ps
 
         self._log_info("Loaded patch.", dialect=dialect, file_blocks=len(blocks), files=ps.total_files(), hunks=ps.total_hunks())
-        self._set_status(f"Loaded patch: {ps.total_files()} file(s), {ps.total_hunks()} hunk(s)", state="Patch loaded", warn=f"Dialect: {dialect}")
+        self._set_status(
+            f"Loaded patch: {ps.total_files()} file(s), {ps.total_hunks()} hunk(s)",
+            state="Patch loaded",
+            warn=f"Dialect: {dialect}",
+        )
 
-        # Preflight markers will be updated after running preflight, but list can be built now
         self._rebuild_file_list()
         self._refresh_actions()
 
@@ -420,15 +676,19 @@ class MainWindow(QMainWindow):
         self.preflight_report = report
         self._rebuild_file_list()
 
-        # Summarize
-        bad = [r for r in report if r["status"] in ("Missing", "Invalid", "Outside root", "Blocked") or (r["status"].startswith("Unsupported") and not self.chk_skip_bin.isChecked())]
+        bad = [
+            r for r in report
+            if r["status"] in ("Missing", "Invalid", "Outside root", "Blocked")
+            or (r["status"].startswith("Unsupported") and not self.chk_skip_bin.isChecked())
+        ]
         if bad:
             self._log_warn("Preflight found issues.", issues=len(bad))
-            self._set_status("Preflight found issues.", state="Preflight", warn=f"Issues: {len(bad)}")
+            self._set_status("Preflight found issues.", state="Preflight warning", warn=f"Issues: {len(bad)}")
         else:
             self._log_info("Preflight passed.", files=len(report))
-            self._set_status("Preflight passed.", state="Preflight", warn="")
+            self._set_status("Preflight passed.", state="Preflight clear", warn="No blocking issues.")
 
+        self._refresh_actions()
         dlg = PreflightReportDialog(self, report)
         dlg.exec()
 
@@ -439,14 +699,16 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Preview", "Choose a root folder first (Open Folder…).")
             return
 
-        # Always run preflight first as required
         report = self.applier.preflight(self.patchset, self.root_folder, self._options())
         self.preflight_report = report
         self._rebuild_file_list()
 
-        blocking = [r for r in report if r["status"] in ("Missing", "Invalid", "Outside root", "Blocked") or (r["status"].startswith("Unsupported") and not self.chk_skip_bin.isChecked())]
+        blocking = [
+            r for r in report
+            if r["status"] in ("Missing", "Invalid", "Outside root", "Blocked")
+            or (r["status"].startswith("Unsupported") and not self.chk_skip_bin.isChecked())
+        ]
         if blocking:
-            # Friendly top-level message + actions
             msg = QMessageBox(self)
             msg.setWindowTitle("Preview Blocked")
             msg.setIcon(QMessageBox.Icon.Warning)
@@ -460,7 +722,8 @@ class MainWindow(QMainWindow):
                 self._open_folder()
             elif msg.clickedButton() == report_btn:
                 PreflightReportDialog(self, report).exec()
-            self._set_status("Preview blocked by preflight.", state="Preview", warn=f"Issues: {len(blocking)}")
+            self._set_status("Preview blocked by preflight.", state="Preview blocked", warn=f"Issues: {len(blocking)}")
+            self._refresh_actions()
             return
 
         prev = self.applier.preview_apply(self.patchset, self.root_folder, self._options())
@@ -469,13 +732,22 @@ class MainWindow(QMainWindow):
             self._log(entry.get("level", "INFO"), entry.get("message", ""), **{k: v for k, v in entry.items() if k not in ("ts", "level", "message")})
 
         if not prev.success:
-            self._set_status("Preview failed.", state="Preview", warn="See Diagnostics.")
+            self._set_status("Preview failed.", state="Preview failed", warn="Open diagnostics for exact mismatch details.")
             self._show_preview_failure(prev)
         else:
             conf = prev.summary.get("conflicted_files", [])
-            warn = f"Conflicts: {len(conf)}" if conf else ""
-            self._set_status(f"Preview succeeded. Hunks applied: {prev.summary.get('hunks_applied', 0)}", state="Preview", warn=warn)
-            self._log_info("Preview succeeded.", hunks=prev.summary.get("hunks_applied", 0), added=prev.summary.get("lines_added", 0), removed=prev.summary.get("lines_removed", 0))
+            warn = f"Conflicts: {len(conf)}" if conf else "No conflicts detected."
+            self._set_status(
+                f"Preview succeeded. Hunks applied: {prev.summary.get('hunks_applied', 0)}",
+                state="Preview ready",
+                warn=warn,
+            )
+            self._log_info(
+                "Preview succeeded.",
+                hunks=prev.summary.get("hunks_applied", 0),
+                added=prev.summary.get("lines_added", 0),
+                removed=prev.summary.get("lines_removed", 0),
+            )
 
         self._refresh_actions()
 
@@ -485,24 +757,20 @@ class MainWindow(QMainWindow):
 
         opts = self._options()
 
-        # Enforce safety contract:
-        # - no file modified unless preflight passes and preview succeeds unless overridden (partial override is not "skip preview")
-        # Here: require preview_result.success unless user explicitly enables Partial apply per-file override AND confirms they accept risk.
         if not self.preview_result or not self.preview_result.success:
-            # If they haven't previewed or preview failed, block unless user explicitly chooses to proceed (advanced override not specified as a toggle, so we block).
             QMessageBox.warning(self, "Apply Blocked", "Apply is only enabled after a successful Preview (dry-run).")
             return
 
         conflicted = self.preview_result.summary.get("conflicted_files", [])
         if conflicted and not opts.get("allow_writing_conflicted_output", False):
             QMessageBox.warning(
-                self, "Apply Blocked",
+                self,
+                "Apply Blocked",
                 "Preview produced conflicted output. Writing conflicted output is blocked.\n\n"
-                "To proceed, enable 'Allow writing conflicted output' in Advanced (not recommended)."
+                "To proceed, enable 'Allow writing conflicted output' in Advanced (not recommended).",
             )
             return
 
-        # Confirmation dialog summary
         summ = self.preview_result.summary
         files_total = summ.get("files_total", 0)
         hunks = summ.get("hunks_applied", 0)
@@ -510,7 +778,6 @@ class MainWindow(QMainWindow):
         removed = summ.get("lines_removed", 0)
         backup_strategy = f"Backup folder: {Path(self.root_folder) / '.patchstudio_backups' / 'YYYYMMDD_HHMMSS'}\nSibling .bak files: best-effort"
 
-        # Per-operation counts from patchset
         ops = {"modify": 0, "create": 0, "delete": 0, "rename": 0}
         for fp in self.patchset.files:
             ops[fp.operation] = ops.get(fp.operation, 0) + 1
@@ -532,18 +799,18 @@ class MainWindow(QMainWindow):
             self._log(entry.get("level", "INFO"), entry.get("message", ""), **{k: v for k, v in entry.items() if k not in ("ts", "level", "message")})
 
         if applied.success:
-            self._set_status("Apply completed.", state="Apply", warn=f"Backup: {applied.summary.get('backup_folder','')}")
+            self._set_status("Apply completed.", state="Apply complete", warn=f"Backup: {applied.summary.get('backup_folder','')}")
             QMessageBox.information(self, "Apply Completed", f"Apply completed.\n\nBackup folder:\n{applied.summary.get('backup_folder','')}")
         else:
-            self._set_status("Apply failed.", state="Apply", warn="See Log/Diagnostics.")
+            self._set_status("Apply failed.", state="Apply failed", warn="See log and diagnostics for details.")
             QMessageBox.critical(self, "Apply Failed", applied.overall_message)
+        self._refresh_actions()
 
     def _run_generate(self):
         if not self.patchset or not self.preview_result or not self.preview_result.summary.get("outputs"):
             QMessageBox.information(self, "Generate Diff", "Run Preview first to produce patched outputs.")
             return
 
-        # Build baseline mapping deterministically from disk for referenced files, using display_path keys
         baseline: Dict[str, str] = {}
         if not self.root_folder:
             return
@@ -575,7 +842,7 @@ class MainWindow(QMainWindow):
         gen = self.generator.generate_unified_patchset(baseline, self.preview_result.summary["outputs"], self.patchset)
         self.patch_text = gen
         self._log_info("Generated unified diff from baseline vs patched outputs.", bytes=len(gen))
-        self._set_status("Generated diff ready.", state="Generate", warn="")
+        self._set_status("Generated diff ready.", state="Generate ready", warn="Use Save Diff to write it to disk.")
         QMessageBox.information(self, "Generate Diff", "Generated unified diff is now loaded in session.\nUse Save Diff to write it to disk.")
         self._refresh_actions()
 
@@ -588,9 +855,10 @@ class MainWindow(QMainWindow):
         try:
             Path(fn).write_text(self.patch_text, encoding="utf-8", newline="\n")
             self._log_info("Saved diff.", path=fn, bytes=len(self.patch_text))
-            self._set_status(f"Saved diff: {fn}", state="Save Diff", warn="")
+            self._set_status(f"Saved diff: {fn}", state="Save complete", warn="Patch artifact written to disk.")
         except Exception as e:
             QMessageBox.critical(self, "Save Failed", f"Could not save diff:\n{e}")
+        self._refresh_actions()
 
     def _toggle_advanced(self):
         self.adv_dock.setVisible(not self.adv_dock.isVisible())
@@ -605,7 +873,7 @@ class MainWindow(QMainWindow):
             "3) Preflight (validate file references under root)\n"
             "4) Preview (dry-run apply in memory)\n"
             "5) Apply (safe backup + atomic write)\n\n"
-            "Advanced settings are hidden by default (use Advanced button)."
+            "Advanced settings are hidden by default (use Advanced button).",
         )
 
     def _run_selftests_ui(self):
@@ -617,7 +885,7 @@ class MainWindow(QMainWindow):
 
     # ---------------- Selection Handling ----------------
 
-    def _on_file_selected(self):
+    def _on_file_selected(self, *args):
         idx = self.file_list.currentIndex()
         if not idx.isValid():
             return
@@ -629,26 +897,23 @@ class MainWindow(QMainWindow):
         fp = it.data(Qt.ItemDataRole.UserRole + 1)
 
         if fp is None:
-            # single-file session with no patch: clear diff view
             self.diff_model.set_rows([])
             self._set_current_file_ext(display)
             return
 
-        # Set extension for syntax emphasis
         self._set_current_file_ext(display)
-
-        # Build diff alignment from file patch
         self.diff_model.build_from_filepatch(fp)
-
-        # Provide a concise status
-        self._set_status(f"Viewing: {display} ({fp.operation})", state="View", warn="")
+        self._set_status(f"Viewing: {display} ({fp.operation})", state="View", warn="Diff surface synchronized to selected file.")
 
     # ---------------- Diagnostics ----------------
 
     def _show_preview_failure(self, prev: ApplyResult) -> None:
-        # Determine likely root cause tiering:
         preflight = prev.summary.get("preflight", [])
-        blocking = [r for r in preflight if r["status"] in ("Missing", "Invalid", "Outside root", "Blocked") or (r["status"].startswith("Unsupported") and not self.chk_skip_bin.isChecked())]
+        blocking = [
+            r for r in preflight
+            if r["status"] in ("Missing", "Invalid", "Outside root", "Blocked")
+            or (r["status"].startswith("Unsupported") and not self.chk_skip_bin.isChecked())
+        ]
         if blocking:
             title = "Preflight failed"
             summary_lines = ["Patch references files not found or not allowed under the selected root folder."]
@@ -666,8 +931,6 @@ class MainWindow(QMainWindow):
             DiagnosticsDialog(self, title, summary_lines, causes, fixes, eng, jump_callback=None).exec()
             return
 
-        # Otherwise: content mismatch / hunk apply failure
-        # Find first failing file diagnostics
         failing = None
         for k, v in prev.per_file.items():
             if v.get("status") == "Failed":
@@ -689,7 +952,7 @@ class MainWindow(QMainWindow):
         title = "Hunk application failed"
         summary_lines = [
             f"File: {fname}",
-            f"Attempted at line {attempted_line_1b}" if attempted_line_1b else "Attempt location unavailable"
+            f"Attempted at line {attempted_line_1b}" if attempted_line_1b else "Attempt location unavailable",
         ]
         causes = [
             "The file content has drifted from the patch’s expected context",
@@ -714,10 +977,8 @@ class MainWindow(QMainWindow):
         }
 
         def do_jump():
-            # Jump to suspected location: approximate by scanning diff rows for nearest old/new line hint
             target = None
             if attempted_line_1b:
-                # find a row with line_hint_old close
                 best_row = None
                 best_dist = 10**9
                 for r in range(self.diff_model.rowCount()):
@@ -743,33 +1004,34 @@ class MainWindow(QMainWindow):
     def _multiline_input(self, title: str, label: str) -> Tuple[str, bool]:
         dlg = QDialog(self)
         dlg.setWindowTitle(title)
-        dlg.resize(900, 520)
+        dlg.resize(960, 560)
         lay = QVBoxLayout(dlg)
-        lay.addWidget(QLabel(label))
+        lay.setContentsMargins(14, 14, 14, 14)
+        lay.setSpacing(10)
+        card = QFrame()
+        card.setObjectName("DialogCard")
+        card_lay = QVBoxLayout(card)
+        card_lay.setContentsMargins(14, 14, 14, 14)
+        card_lay.setSpacing(10)
+        lay.addWidget(card)
 
-        # Use a QTableView-like control is overkill for paste; a simple input dialog is acceptable for a modal paste dialog.
-        # Implement with QFileDialog-like minimal widget: use QTextEdit is not allowed as primary diff rendering; here it is a dialog helper.
-        # To stay strict, we implement a plain QWidget with a QPlainTextEdit-equivalent is avoided. Use a QLineEdit multi-line substitute via QComboBox is poor.
-        # Practical deterministic approach: use a QFileDialog open-from-clipboard is not feasible.
-        # Use QMessageBox with details also is limited.
-        # Therefore, use a QDialog with a QTableView-based single-cell editor is heavy.
-        # Use a simple multi-line input using a minimal internal widget:
-        from PyQt6.QtWidgets import QPlainTextEdit  # local import; not used for diff rendering
+        title_lbl = QLabel(label)
+        title_lbl.setObjectName("SectionTitle")
+        card_lay.addWidget(title_lbl)
+
+        from PyQt6.QtWidgets import QPlainTextEdit
         edit = QPlainTextEdit()
-        edit.setFont(QFont("Consolas", 10))
+        edit.setFont(build_font())
         edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        lay.addWidget(edit)
+        card_lay.addWidget(edit, 1)
 
         btns = QHBoxLayout()
         btns.addStretch(1)
-        ok_btn = QPushButton("OK")
-        cancel_btn = QPushButton("Cancel")
+        ok_btn = self._make_action_button("OK", dlg.accept, role="primary")
+        cancel_btn = self._make_action_button("Cancel", dlg.reject)
         btns.addWidget(ok_btn)
         btns.addWidget(cancel_btn)
-        lay.addLayout(btns)
-
-        ok_btn.clicked.connect(dlg.accept)
-        cancel_btn.clicked.connect(dlg.reject)
+        card_lay.addLayout(btns)
 
         rc = dlg.exec()
         return edit.toPlainText(), (rc == QDialog.DialogCode.Accepted)
@@ -778,5 +1040,3 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         event.accept()
-
-

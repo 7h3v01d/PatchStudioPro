@@ -1,14 +1,25 @@
-"""Patch Studio UI: Qt models for tables and aligned diff rendering."""
+"""Patch Studio UI: Qt models for tables and aligned diff rendering.
+
+SPDX-License-Identifier: Apache-2.0
+Copyright (c) Leon Priest (7h3v01d)
+"""
 
 from __future__ import annotations
 
+import time
 import json
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any
 
 from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex
 from PyQt6.QtGui import QBrush, QColor
 
 from ..core.models import FilePatch
+from .theme import DIFF_BG, DIFF_FG, LEVEL_FG, PALETTE
+
+
+def _brush(hex_value: str) -> QBrush:
+    return QBrush(QColor(hex_value))
+
 
 class DiffAlignmentModel(QAbstractTableModel):
     """
@@ -36,16 +47,23 @@ class DiffAlignmentModel(QAbstractTableModel):
         self._rows: List[Dict[str, Any]] = []
         self._header = ["Old", "Old Text", "New", "New Text"]
 
-        # Soft colors (explicit RGB)
-        self._bg_context = QBrush(QColor(255, 255, 255))
-        self._bg_line_no = QBrush(QColor(242, 242, 242))
-        self._bg_add = QBrush(QColor(228, 246, 228))
-        self._bg_del = QBrush(QColor(246, 228, 228))
-        self._bg_mod = QBrush(QColor(252, 246, 220))
-        self._bg_conflict = QBrush(QColor(238, 226, 246))
-        self._bg_hunk = QBrush(QColor(248, 248, 248))
+        self._bg_context = _brush(DIFF_BG["context"])
+        self._bg_line_no = _brush(DIFF_BG["gutter"])
+        self._bg_add = _brush(DIFF_BG["add"])
+        self._bg_del = _brush(DIFF_BG["del"])
+        self._bg_mod = _brush(DIFF_BG["mod"])
+        self._bg_conflict = _brush(DIFF_BG["conflict"])
+        self._bg_hunk = _brush(DIFF_BG["hunk"])
 
-        self._fg_default = QBrush(QColor(20, 20, 20))
+        self._fg_default = _brush(DIFF_FG["context"])
+        self._fg_muted = _brush(DIFF_FG["gutter"])
+        self._fg_by_kind = {
+            self.KIND_ADD: _brush(DIFF_FG["add"]),
+            self.KIND_DEL: _brush(DIFF_FG["del"]),
+            self.KIND_MOD: _brush(DIFF_FG["mod"]),
+            self.KIND_CONFLICT: _brush(DIFF_FG["conflict"]),
+            self.KIND_HUNK: _brush(DIFF_FG["hunk"]),
+        }
 
     def rowCount(self, parent=QModelIndex()) -> int:
         return 0 if parent.isValid() else len(self._rows)
@@ -91,10 +109,8 @@ class DiffAlignmentModel(QAbstractTableModel):
             if kind == self.KIND_HUNK:
                 return self._bg_hunk
             if kind == self.KIND_ADD:
-                # only new columns green
                 return self._bg_add if c in (2, 3) else self._bg_context
             if kind == self.KIND_DEL:
-                # only old columns red
                 return self._bg_del if c in (0, 1) else self._bg_context
             if kind == self.KIND_MOD:
                 return self._bg_mod
@@ -103,16 +119,17 @@ class DiffAlignmentModel(QAbstractTableModel):
             return self._bg_context
 
         if role == Qt.ItemDataRole.ForegroundRole:
-            return self._fg_default
+            if c in (0, 2):
+                return self._fg_muted
+            kind = row.get("kind", self.KIND_CONTEXT)
+            return self._fg_by_kind.get(kind, self._fg_default)
 
         if role == Qt.ItemDataRole.ToolTipRole:
-            # Provide minimal tooltip; UI uses diagnostics panel for details
             if row.get("kind") == self.KIND_HUNK:
                 return row.get("hunk_header", "")
             return None
 
         if role == Qt.ItemDataRole.UserRole:
-            # expose metadata for jump
             return row
 
         return None
@@ -125,7 +142,6 @@ class DiffAlignmentModel(QAbstractTableModel):
     def build_from_filepatch(self, fp: FilePatch) -> None:
         rows: List[Dict[str, Any]] = []
         for h_idx, h in enumerate(fp.hunks):
-            # hunk header row
             rows.append({
                 "old_no": "",
                 "old_text": h.header,
@@ -140,7 +156,6 @@ class DiffAlignmentModel(QAbstractTableModel):
             old_ln = h.old_start
             new_ln = h.new_start
 
-            # walk hunk lines, aligning change blocks
             del_buf: List[str] = []
             add_buf: List[str] = []
 
@@ -153,13 +168,12 @@ class DiffAlignmentModel(QAbstractTableModel):
                     d = del_buf[i] if i < len(del_buf) else None
                     a = add_buf[i] if i < len(add_buf) else None
                     if d is not None and a is not None:
-                        kind = self.KIND_MOD if d != a else self.KIND_CONTEXT
                         rows.append({
                             "old_no": str(old_ln),
                             "old_text": d,
                             "new_no": str(new_ln),
                             "new_text": a,
-                            "kind": kind if kind != self.KIND_CONTEXT else self.KIND_MOD,
+                            "kind": self.KIND_MOD if d != a else self.KIND_CONTEXT,
                             "hunk_index": h_idx,
                             "line_hint_old": old_ln,
                             "line_hint_new": new_ln,
@@ -213,13 +227,11 @@ class DiffAlignmentModel(QAbstractTableModel):
                 elif tag == "+":
                     add_buf.append(text)
                 else:
-                    # ignore
                     pass
 
             flush_change()
 
         self.set_rows(rows)
-
 
 
 class LogTableModel(QAbstractTableModel):
@@ -246,23 +258,25 @@ class LogTableModel(QAbstractTableModel):
             return None
         row = self._rows[index.row()]
         c = index.column()
+        level = str(row.get("level", "")).upper()
 
         if role == Qt.ItemDataRole.DisplayRole:
             if c == 0:
                 ts = row.get("ts", 0.0)
                 return time.strftime("%H:%M:%S", time.localtime(ts))
             if c == 1:
-                return row.get("level", "")
+                return level
             if c == 2:
                 return row.get("message", "")
         if role == Qt.ItemDataRole.ToolTipRole:
-            # JSON details
             det = {k: v for k, v in row.items() if k not in ("ts", "level", "message")}
             if det:
                 try:
                     return json.dumps(det, indent=2)
                 except Exception:
                     return str(det)
+        if role == Qt.ItemDataRole.ForegroundRole:
+            return _brush(LEVEL_FG.get(level, LEVEL_FG["INFO"]))
         return None
 
     def append(self, entry: Dict[str, Any]) -> None:
@@ -274,7 +288,6 @@ class LogTableModel(QAbstractTableModel):
         self.beginResetModel()
         self._rows = []
         self.endResetModel()
-
 
 
 class PreflightTableModel(QAbstractTableModel):
@@ -301,6 +314,7 @@ class PreflightTableModel(QAbstractTableModel):
             return None
         r = self._rows[index.row()]
         c = index.column()
+        status = str(r.get("status", ""))
         if role == Qt.ItemDataRole.DisplayRole:
             if c == 0:
                 return r.get("file", "")
@@ -309,11 +323,18 @@ class PreflightTableModel(QAbstractTableModel):
             if c == 2:
                 return r.get("resolved", "")
             if c == 3:
-                return r.get("status", "")
+                return status
             if c == 4:
                 return r.get("suggested", "")
+        if role == Qt.ItemDataRole.ForegroundRole:
+            if status in ("Missing", "Invalid", "Outside root", "Blocked"):
+                return _brush(PALETTE["red"])
+            if status.startswith("Unsupported"):
+                return _brush(PALETTE["amber"])
+            if status in ("Ready", "OK", "Exists"):
+                return _brush(PALETTE["green"])
+            return _brush(PALETTE["text"])
         return None
-
 
 
 class KeyValueTableModel(QAbstractTableModel):
@@ -341,6 +362,6 @@ class KeyValueTableModel(QAbstractTableModel):
         row = self._rows[index.row()]
         if role == Qt.ItemDataRole.DisplayRole:
             return row["k"] if index.column() == 0 else row["v"]
+        if role == Qt.ItemDataRole.ForegroundRole:
+            return _brush(PALETTE["text_dim"] if index.column() == 0 else PALETTE["text"])
         return None
-
-

@@ -1,4 +1,8 @@
-"""Patch Studio core: preview/apply patchsets to memory and disk."""
+"""Patch Studio core: preview/apply patchsets to memory and disk.
+
+SPDX-License-Identifier: Apache-2.0
+Copyright (c) Leon Priest (7h3v01d)
+"""
 
 from __future__ import annotations
 
@@ -10,6 +14,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 
 from .models import PatchSet, FilePatch, Hunk, ApplyResult
+
 
 class PatchApplier:
     """
@@ -36,6 +41,7 @@ class PatchApplier:
             status = "Found"
             suggested = ""
             resolved = ""
+            resolved_path = None
 
             if root is None:
                 status = "Invalid"
@@ -69,6 +75,7 @@ class PatchApplier:
                         except Exception:
                             status = "Outside root"
                             suggested = "Choose a different root folder or fix patch paths (path resolves outside root)."
+                            resolved = ""
                         else:
                             if is_bin:
                                 status = "Unsupported (binary)"

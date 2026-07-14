@@ -1,188 +1,139 @@
 # Patch Studio
 
-Patch Studio is a structured, safety-first desktop application for reviewing, validating, and applying unified diff patches to a local project directory.
-It provides deterministic patch execution, preflight validation, and explicit operator control to ensure filesystem changes occur only after transparent review.
-________________________________________
+A deterministic desktop tool for reviewing, validating, and applying unified diff patches to a local project directory.
 
-## Executive Summary
+Patch Studio exists because command-line patch tools will happily half-apply a diff and leave you to work out what happened. This one won't: nothing touches disk until a dry-run has succeeded and you have explicitly confirmed it.
 
-Patch Studio is designed for environments where:
+**Normalize → Parse → Preflight → Preview → Apply.** Every stage is visible, every write is backed up, every path is bound to the workspace root.
 
--	Patch integrity matters
--	Filesystem safety is non-negotiable
-- Blind or partial patch application is unacceptable
--	Deterministic outcomes are required
-  
-Unlike traditional command-line patch utilities that may silently skip hunks or partially apply changes, Patch Studio enforces a structured workflow:
+---
 
-1.	Normalize
-2.	Parse
-3.	Preflight
-4.	Preview (dry-run)
-5.	Apply (explicit confirmation)
-   
-This design ensures that all operations are visible, reversible, and root-bound.
-________________________________________
+## The workflow
 
-### Core Capabilities
+1. **Select a workspace root.** Every patch path resolves relative to it. Anything that escapes the root is blocked.
+2. **Load a patch** from a file or paste it in. Git, index-style, and classic unified diffs are detected automatically.
+3. **Preflight.** Resolves each referenced file and reports what's ready, missing, blocked, or binary — before anything runs.
+4. **Preview.** A full in-memory simulation. Conflicts surface here, not on your filesystem.
+5. **Apply.** Enabled only after a clean preview. Backs up, then writes atomically.
 
-#### Unified Diff Support
+Apply stays disabled until preview succeeds. Conflicted output stays blocked unless you explicitly unblock it in Advanced.
 
--	Git-style diffs (diff --git)
--	index format diffs
--	Classic unified diffs
--	Automatic dialect detection
-  
-#### Supported Operations
+---
 
--	File creation
--	File modification
--	File deletion
--	Rename (optionally gated)
--	Mode changes (optionally gated)
-  
-#### Deterministic Preview Engine
+## Capabilities
 
--	Full in-memory simulation prior to disk writes
--	Conflict detection before apply
--	Explicit blocking on unsafe conditions
--	No silent partial application
-  
-________________________________________
-### Safety Architecture
+**Diff dialects:** `diff --git`, index-format, classic unified. Dialect detection is automatic.
 
-Patch Studio enforces a strict execution model:
+**Operations:** create, modify, delete, rename (gated), mode change (gated).
 
-### Root-Bound Execution
+**Preview engine:** in-memory simulation, conflict detection ahead of apply, explicit blocking on unsafe conditions, no silent partial application.
 
-All patch paths are resolved relative to a selected project root.
-Operations targeting paths outside the root are blocked.
+**Backups:** every modified file is copied to `<root>/.patchstudio_backups/<timestamp>/` before it is touched. Writes are atomic.
 
-### Mandatory Preflight
+**Advanced controls** (hidden by default — these deliberately relax the gates):
 
-Before preview or apply, the system validates:
+| Control | Effect |
+|---|---|
+| Strict filename match | Refuse near-miss path resolution |
+| Best-effort fuzzy apply | Search a window around the expected line |
+| Ignore whitespace differences | Match context ignoring leading/trailing space |
+| Conflict marker mode | Emit 3-way style markers instead of failing |
+| Allow rename/delete/mode changes | Ungate metadata operations |
+| Partial apply per-file override | Let a file apply with some hunks failed |
+| Preserve original line endings | Keep CRLF/LF as found (on by default) |
+| Allow writing conflicted output | Write files containing conflict markers |
+| Skip unsupported binary files | Continue past binary hunks (on by default) |
 
--	Path existence
--	Path validity
--	Outside-root access attempts
--	Unsupported binary patches
--	Rename/delete/mode-change permissions
-  
-### Apply Gating
+---
 
--	Apply is only enabled after a successful preview
--	Conflicted output is blocked unless explicitly allowed
--	Disk preflight is re-run prior to write
-  
-### Backup Strategy
+## The interface
 
-All modified files are backed up under:
+Dark instrument-panel aesthetic: obsidian ground, teal for focus and active state, phosphor green for go, amber for gated, red for blocked. Monospace throughout, zero-radius controls, hairline rules.
+
+State is carried by colour, not decoration. Each session card has an accent rail — grey for nothing loaded, teal for loaded, green for armed, amber for gated, red for blocked — so the state of the apply gate is legible at a glance.
+
+Every colour in the app comes from one token table in `patchstudio/ui/theme.py`. Nothing else in the package hard-codes an RGB value, so retheming is a single-file edit.
+
+---
+
+## Install and run
+
+Requires **Python 3.10+** and **PyQt6**.
+
 ```bash
-<project-root>/.patchstudio_backups/
+pip install -r requirements.txt
 ```
-Backups are timestamped and created before any modification.
 
-### Atomic Writes
-All file modifications use atomic write patterns to prevent partial corruption.
-________________________________________
-### Advanced Controls
+Run from the `src` directory:
 
-Patch Studio includes configurable safeguards:
-
--	Strict filename matching
--	Best-effort fuzzy apply
--	Ignore whitespace differences
--	Preserve original line endings
--	Skip unsupported binary patches
--	Conflict marker mode:
-    -	diff3
-    -	merge    
--	Rename/delete/mode-change gating
--	Partial apply override (advanced use only)
--	Allow writing conflicted output (explicitly gated)
-  
-These controls allow adaptation to legacy codebases, large diffs, and heterogeneous development environments.
-________________________________________
-Operational Workflow
-1.	Select project root
-2.	Load or paste patch
-3.	Run Preview (dry-run simulation)
-4.	Review results and conflicts
-5.	Apply changes
-No disk modifications occur without explicit operator confirmation.
-________________________________________
-### Developer Utilities
-Self-Test Mode
-Patch Studio includes a built-in validation mode:
-```bash
-python -m patchstudio.app --selftest
-```
-This runs internal engine checks without launching the GUI.
-
-### Modular Architecture
-The refactored package structure separates:
-
--	Patch normalization
--	Unified diff parsing
--	Preflight validation
--	Apply engine
--	Diff generation
--	GUI presentation layer
-
-This improves maintainability, auditability, and future extensibility.
-________________________________________
-### Installation
-Requirements
--	Python 3.10+
--	PySide6
-
-#### Install dependencies:
-```bash
-pip install PySide6
-```
-### Run Application
-
-#### From project root:
 ```bash
 python -m patchstudio.app
 ```
-Or via entry script:
+
+Or via the entry script:
+
 ```bash
 python run_patchstudio.py
 ```
-________________________________________
-### Intended Use Cases
--	Enterprise codebase patch review
--	Secure patch application workflows
--	Controlled environment updates
--	QA validation of patch integrity
--	Manual inspection before release integration
-________________________________________
-### Non-Goals
-Patch Studio is not:
--	A Git client
--	A repository history manager
--	A 3-way merge tool
--	A replacement for CI/CD pipelines
-It operates strictly on the current filesystem state.
-________________________________________
-### Design Principles
-Patch Studio prioritizes:
--	Determinism over automation
--	Operator visibility over silent correction
--	Explicit gating over implicit behavior
--	Safety over speed
--	Reversibility over convenience
-________________________________________
-### Roadmap
-Future enhancements may include:
--	Expanded test coverage
--	CLI-only execution mode
--	Patch signing / integrity verification
--	Enhanced conflict visualization
--	Structured logging export
-________________________________________
-###License
 
-Specify your preferred license here.
+---
 
+## Developer utilities
+
+**Built-in engine checks**, no GUI required:
+
+```bash
+python -m patchstudio.app --selftest
+```
+
+**Test suite:**
+
+```bash
+cd src
+pytest tests
+```
+
+Headless environments need `QT_QPA_PLATFORM=offscreen`.
+
+**Package layout:**
+
+```
+patchstudio/
+  core/     normalizer · parser · applier · diffgen · models · selftests
+  ui/       theme · main_window · models · delegates · dialogs
+```
+
+Core carries no Qt dependency and can be driven headlessly.
+
+---
+
+## Design principles
+
+- Determinism over automation
+- Operator visibility over silent correction
+- Explicit gating over implicit behaviour
+- Safety over speed
+- Reversibility over convenience
+
+---
+
+## Non-goals
+
+Patch Studio is not a Git client, a history manager, a 3-way merge tool, or a CI/CD replacement. It operates strictly on the current filesystem state.
+
+---
+
+## Roadmap
+
+- CLI-only execution mode
+- Patch signing and integrity verification
+- Richer conflict visualisation
+- Structured log export
+
+---
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+Copyright © 2026 Leon Priest ([7h3v01d](https://github.com/7h3v01d)).

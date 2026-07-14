@@ -1,4 +1,8 @@
-"""Patch Studio core: patch text normalization & dialect detection."""
+"""Patch Studio core: patch text normalization & dialect detection.
+
+SPDX-License-Identifier: Apache-2.0
+Copyright (c) Leon Priest (7h3v01d)
+"""
 
 from __future__ import annotations
 
